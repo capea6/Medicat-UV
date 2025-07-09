@@ -1,6 +1,11 @@
+param(
+    [string]$Message = "",
+    [Parameter(ValueFromRemainingArguments=$true)]
+    [string[]]$Buttons
+)
+
 Add-Type -AssemblyName PresentationFramework
 
-$Buttons = @($args)
 if (-not $Buttons -or $Buttons.Count -eq 0) {
     [System.Windows.MessageBox]::Show("No se han definido botones para el menú.","Error")
     exit 1
@@ -8,8 +13,8 @@ if (-not $Buttons -or $Buttons.Count -eq 0) {
 
 $window = New-Object Windows.Window
 $window.Title = "Medicat Instalador"
-$window.Width = 500
-$window.Height = 80 + ($Buttons.Count * 50)
+$window.Width = 600
+$window.Height = 120 + ($Buttons.Count * 50)
 $window.WindowStartupLocation = "CenterScreen"
 $window.ResizeMode = "NoResize"
 
@@ -17,6 +22,16 @@ $stack = New-Object Windows.Controls.StackPanel
 $stack.Margin = '20'
 $stack.HorizontalAlignment = 'Center'
 $stack.VerticalAlignment = 'Center'
+
+# Mensaje descriptivo
+if ($Message) {
+    $label = New-Object Windows.Controls.TextBlock
+    $label.Text = $Message
+    $label.TextWrapping = "Wrap"
+    $label.Margin = '0,0,0,20'
+    $label.FontSize = 16
+    $stack.Children.Add($label)
+}
 
 $selected = $null
 
