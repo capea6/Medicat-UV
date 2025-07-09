@@ -4,6 +4,10 @@ param(
     [string[]]$Buttons
 )
 
+# Reemplazar '\n' y '`n' por saltos de línea reales
+$Message = $Message -replace '\\n', "`n"
+$Message = $Message -replace '`n', "`n"
+
 Add-Type -AssemblyName PresentationFramework
 
 if (-not $Buttons -or $Buttons.Count -eq 0) {
