@@ -37,6 +37,13 @@ if ($Message) {
     $stack.Children.Add($label)
 }
 
+# Calcular líneas del mensaje para ajustar la altura
+$lineCount = ($Message -split "`n").Count
+if ($lineCount -lt 3) { $lineCount = 3 } # Altura mínima para mensajes cortos
+
+$window.Width = 800
+$window.Height = 100 + ($Buttons.Count * 55) + ($lineCount * 28)
+
 $selected = $null
 
 foreach ($btnText in $Buttons) {
