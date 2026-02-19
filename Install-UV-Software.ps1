@@ -1,4 +1,4 @@
-﻿# Script para iniciar sesión en disco.uv.es
+# Script para iniciar sesión en disco.uv.es
 # SE EJECUTA AUTOMÁTICAMENTE COMO ADMINISTRADOR
 
 # Verificar si se está ejecutando como administrador
