@@ -682,7 +682,7 @@ try {
                             # ==============================
                             # PASO 1: EJECUTAR DEBLOAT PRIMERO
                             # ==============================
-                            
+
                             Write-Host "========================================" -ForegroundColor Cyan
                             Write-Host "    AUTO-DEBLOAT PARA WINDOWS" -ForegroundColor White
                             Write-Host "========================================" -ForegroundColor Cyan
@@ -690,341 +690,35 @@ try {
                             Write-Host "Ejecutando debloat ANTES de las instalaciones para tener un sistema limpio" -ForegroundColor Yellow
                             Write-Host ""
 
-                        # Cargar System.Windows.Forms para SendKeys
-                        try {
-                            Add-Type -AssemblyName System.Windows.Forms
-                            Write-Host "Sistema de automatizacion cargado correctamente" -ForegroundColor Green
-                        } catch {
-                            Write-Host "ERROR: No se pudo cargar System.Windows.Forms" -ForegroundColor Red
-                            Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
-                            Write-Host "Continuando sin automatización de teclas..." -ForegroundColor Yellow
-                        }
-
                         Write-Host ""
-                        Write-Host "=== INICIANDO DEBLOAT AUTOMATIZADO ===" -ForegroundColor Green
+                        Write-Host "=== INICIANDO DEBLOAT SILENCIOSO ===" -ForegroundColor Green
                         Write-Host ""
 
                         try {
                             Write-Host "Descargando y ejecutando debloat desde: https://debloat.raphi.re/" -ForegroundColor Cyan
-                            Write-Host "Esto puede tomar unos momentos..." -ForegroundColor Gray
+                            Write-Host "Modo: CLI silencioso con punto de restauracion" -ForegroundColor Cyan
+                            Write-Host "Esto puede tomar unos minutos..." -ForegroundColor Gray
                             Write-Host ""
-                            
-                            # Obtener procesos de PowerShell actuales antes del debloat
-                            $initialPowerShellProcesses = Get-Process -Name "powershell" -ErrorAction SilentlyContinue | Select-Object Id
-                            
-                            Write-Host "=== EJECUTANDO DEBLOAT DIRECTAMENTE ===" -ForegroundColor Cyan
-                            Write-Host "Descargando script y ejecutando en nueva ventana..." -ForegroundColor Gray
-                            
-                            # Ejecutar el debloat en una nueva ventana de PowerShell como administrador
-                            $debloatCommand = "& ([scriptblock]::Create((Invoke-RestMethod 'https://debloat.raphi.re/')))"
-                            $process = Start-Process -FilePath "powershell.exe" -ArgumentList "-Command", $debloatCommand -Verb runAs -PassThru
-                            
-                            Write-Host "Proceso de debloat iniciado (PID: $($process.Id))" -ForegroundColor Yellow
-                            Write-Host ""
-                            
-                            # Detectar cuando se abre la nueva ventana de PowerShell del debloat
-                            Write-Host "=== DETECTANDO VENTANA DE DEBLOAT ===" -ForegroundColor Cyan
-                            Write-Host "Esperando a que se abra la ventana de PowerShell del debloat..." -ForegroundColor Gray
-                            
-                            # Esperar hasta detectar la ventana de PowerShell del debloat
-                            $debloatWindowReady = $false
-                            $waitTimeout = 0
-                            $maxWaitTime = 120 # 2 minutos máximo para detectar ventana
-                            
-                            Write-Host "Esperando a que se abra la ventana de PowerShell del debloat..." -ForegroundColor Gray
-                            
-                            # Definir API de Windows una sola vez
-                            try {
-                                Add-Type -TypeDefinition @"
-                                    using System;
-                                    using System.Runtime.InteropServices;
-                                    using System.Text;
-                                    public class WindowAPI {
-                                        [DllImport("user32.dll")]
-                                        public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-                                        [DllImport("user32.dll")]
-                                        public static extern bool SetForegroundWindow(IntPtr hWnd);
-                                        [DllImport("user32.dll")]
-                                        public static extern IntPtr GetForegroundWindow();
-                                        [DllImport("user32.dll")]
-                                        public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
-                                    }
-"@
-                            } catch {
-                                Write-Host "API ya cargada o error cargándola" -ForegroundColor Gray
-                            }
-                            
-                            while (-not $debloatWindowReady -and $waitTimeout -lt $maxWaitTime) {
-                                Start-Sleep -Seconds 3
-                                $waitTimeout += 3
-                                
-                                # Contar procesos de PowerShell actuales (excluyendo el script actual)
-                                $currentPowerShellProcesses = Get-Process -Name "powershell" -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID }
-                                $newProcessCount = $currentPowerShellProcesses.Count - $initialPowerShellProcesses.Count
-                                
-                                Write-Host "Ventanas detectadas: $newProcessCount (esperando al menos 1 ventana del debloat)" -ForegroundColor Gray
-                                
-                                # Verificar si tenemos al menos 1 nueva ventana de PowerShell del debloat
-                                if ($newProcessCount -ge 1) {
-                                    Write-Host "✓ Se detectó $newProcessCount nueva(s) ventana(s) de PowerShell" -ForegroundColor Green
-                                    
-                                    # Verificar que tenga una ventana visible y buscar la del debloat específicamente
-                                    $debloatWindowFound = $false
-                                    foreach ($proc in $currentPowerShellProcesses) {
-                                        if ($proc.MainWindowHandle -ne [IntPtr]::Zero) {
-                                            # Verificar si esta ventana parece ser del debloat
-                                            try {
-                                                $windowTitle = New-Object System.Text.StringBuilder 256
-                                                [WindowAPI]::GetWindowText($proc.MainWindowHandle, $windowTitle, $windowTitle.Capacity) | Out-Null
-                                                Write-Host "  -> Ventana encontrada: '$($windowTitle.ToString())' (PID: $($proc.Id))" -ForegroundColor Gray
-                                                
-                                                # Si es una ventana de PowerShell nueva, asumimos que es del debloat
-                                                if ($windowTitle.ToString() -like "*PowerShell*" -or $windowTitle.ToString() -like "*Windows PowerShell*") {
-                                                    $debloatWindowFound = $true
-                                                    break
-                                                }
-                                            } catch {
-                                                # Si hay error obteniendo el título, pero hay ventana visible, continuar
-                                                Write-Host "  -> Ventana visible detectada (sin título)" -ForegroundColor Gray
-                                                $debloatWindowFound = $true
-                                                break
-                                            }
-                                        }
-                                    }
-                                    
-                                    if ($debloatWindowFound) {
-                                        Write-Host "✓ Ventana del debloat detectada y visible" -ForegroundColor Green
-                                        $debloatWindowReady = $true
-                                        
-                                        Write-Host "Esperando 8 segundos adicionales para que la ventana del debloat se estabilice..." -ForegroundColor Yellow
-                                        Start-Sleep -Seconds 8
-                                        
-                                        Write-Host "✓ Ventana del debloat lista para recibir comandos" -ForegroundColor Green
-                                    } else {
-                                        Write-Host "Esperando ventana visible del debloat... ($waitTimeout segundos)" -ForegroundColor Gray
-                                    }
-                                } else {
-                                    Write-Host "Esperando ventana del debloat... ($waitTimeout segundos)" -ForegroundColor Gray
-                                }
-                            }
-                            
-                            if ($debloatWindowReady) {
+
+                            # Ejecutar el debloat en modo CLI silencioso
+                            $debloatCommand = '& ([scriptblock]::Create((irm "https://debloat.raphi.re/"))) -CLI -RemoveApps -RunDefaults -Silent -CreateRestorePoint'
+                            $process = Start-Process -FilePath "powershell.exe" -ArgumentList "-Command", $debloatCommand -Verb runAs -PassThru -Wait
+
+                            if ($process.ExitCode -eq 0) {
                                 Write-Host ""
-                                Write-Host "=== INICIANDO AUTOMATIZACION DE RESPUESTAS ===" -ForegroundColor Cyan
-                                Write-Host "Ventana del debloat detectada y estabilizada" -ForegroundColor Green
-                                Write-Host "Secuencia automatica: 1 -> 1 -> Enter -> n -> Enter" -ForegroundColor Gray
-                                Write-Host ""
+                                Write-Host "DEBLOAT COMPLETADO EXITOSAMENTE" -ForegroundColor Green
                             } else {
                                 Write-Host ""
-                                Write-Host "⚠ TIMEOUT: No se detectó la ventana del debloat en el tiempo esperado" -ForegroundColor Yellow
-                                Write-Host "Intentando enviar respuestas de todos modos..." -ForegroundColor Yellow
-                                Write-Host "Asegúrese de que la ventana del debloat esté activa." -ForegroundColor Yellow
-                                Write-Host ""
+                                Write-Host "DEBLOAT COMPLETADO CON CODIGO: $($process.ExitCode)" -ForegroundColor Yellow
                             }
-                            
-                            # Función avanzada para encontrar y enfocar ventana del debloat
-                            function Focus-DebloatWindow {
-                                try {
-                                    Write-Host "  -> Buscando ventana del debloat..." -ForegroundColor Gray
-                                    
-                                    # Buscar todas las ventanas de PowerShell (excluyendo la actual)
-                                    $powerShellProcesses = Get-Process -Name "powershell" -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID }
-                                    
-                                    # Ordenar por fecha de creación (más reciente primero)
-                                    $powerShellProcesses = $powerShellProcesses | Sort-Object StartTime -Descending
-                                    
-                                    foreach ($proc in $powerShellProcesses) {
-                                        if ($proc.MainWindowHandle -ne [IntPtr]::Zero) {
-                                            $windowTitle = New-Object System.Text.StringBuilder 256
-                                            [WindowAPI]::GetWindowText($proc.MainWindowHandle, $windowTitle, $windowTitle.Capacity) | Out-Null
-                                            
-                                            Write-Host "  -> Encontrada ventana: '$($windowTitle.ToString())' (PID: $($proc.Id))" -ForegroundColor Gray
-                                            
-                                            # Enfocar la ventana más reciente de PowerShell
-                                            if ($windowTitle.ToString() -like "*PowerShell*" -or $windowTitle.ToString() -like "*Windows PowerShell*") {
-                                                Write-Host "  -> Enfocando ventana del debloat: $($windowTitle.ToString())" -ForegroundColor Green
-                                                
-                                                # Enfocar la ventana usando múltiples métodos
-                                                [WindowAPI]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
-                                                Start-Sleep -Milliseconds 200
-                                                
-                                                # Verificar si se enfocó correctamente
-                                                $currentForeground = [WindowAPI]::GetForegroundWindow()
-                                                if ($currentForeground -eq $proc.MainWindowHandle) {
-                                                    Write-Host "  -> ✓ Ventana enfocada correctamente" -ForegroundColor Green
-                                                    return $proc.MainWindowHandle
-                                                } else {
-                                                    Write-Host "  -> Intentando método alternativo..." -ForegroundColor Yellow
-                                                    # Método alternativo: hacer clic en la ventana
-                                                    Add-Type -AssemblyName System.Windows.Forms
-                                                    [System.Windows.Forms.Application]::DoEvents()
-                                                    Start-Sleep -Milliseconds 100
-                                                    [WindowAPI]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
-                                                    Start-Sleep -Milliseconds 300
-                                                    return $proc.MainWindowHandle
-                                                }
-                                            }
-                                        }
-                                    }
-                                    
-                                    Write-Host "  -> No se encontró ventana específica del debloat" -ForegroundColor Yellow
-                                    return [IntPtr]::Zero
-                                } catch {
-                                    Write-Host "  -> Error enfocando ventana: $($_.Exception.Message)" -ForegroundColor Red
-                                    return [IntPtr]::Zero
-                                }
-                            }
-                            
-                            # Función para enviar teclas a ventana específica
-                            function Send-KeyToWindow {
-                                param(
-                                    [string]$Key,
-                                    [IntPtr]$WindowHandle
-                                )
-                                
-                                try {
-                                    # Enfocar ventana antes de enviar tecla
-                                    if ($WindowHandle -ne [IntPtr]::Zero) {
-                                        [WindowAPI]::SetForegroundWindow($WindowHandle) | Out-Null
-                                        Start-Sleep -Milliseconds 100
-                                    }
-                                    
-                                    # Verificar que la ventana esté enfocada
-                                    $currentWindow = [WindowAPI]::GetForegroundWindow()
-                                    if ($WindowHandle -eq [IntPtr]::Zero -or $currentWindow -eq $WindowHandle) {
-                                        [System.Windows.Forms.SendKeys]::SendWait($Key)
-                                        return $true
-                                    } else {
-                                        Write-Host "  -> Ventana no enfocada correctamente" -ForegroundColor Yellow
-                                        return $false
-                                    }
-                                } catch {
-                                    Write-Host "  -> Error enviando tecla: $($_.Exception.Message)" -ForegroundColor Red
-                                    return $false
-                                }
-                            }
-                            
-                            # Secuencia de automatizacion con enfoque de ventana
-                            $responses = @("1", "1", "{ENTER}", "n", "{ENTER}")
-                            $responseNames = @("Opcion 1", "Opcion 1", "Enter", "Confirmacion (n)", "Enter final")
-                            
-                            for ($i = 0; $i -lt $responses.Length; $i++) {
-                                $response = $responses[$i]
-                                $name = $responseNames[$i]
-                                
-                                Write-Host "Enviando respuesta $($i + 1)/5: $name" -ForegroundColor Yellow
-                                
-                                # Buscar y enfocar la ventana del debloat
-                                $debloatWindow = Focus-DebloatWindow
-                                
-                                if ($debloatWindow -eq [IntPtr]::Zero) {
-                                    Write-Host "  -> Advertencia: No se pudo identificar ventana específica" -ForegroundColor Yellow
-                                    Write-Host "  -> Intentando enviar a ventana activa..." -ForegroundColor Gray
-                                }
-                                
-                                $success = $false
-                                $attempts = 0
-                                $maxAttempts = 3
-                                
-                                while (-not $success -and $attempts -lt $maxAttempts) {
-                                    $attempts++
-                                    Write-Host "  -> Intento $attempts de $maxAttempts" -ForegroundColor Gray
-                                    
-                                    try {
-                                        # Enviar la respuesta usando la función específica
-                                        if ($response -eq "{ENTER}") {
-                                            $success = Send-KeyToWindow -Key "{ENTER}" -WindowHandle $debloatWindow
-                                        } else {
-                                            # Enviar la tecla
-                                            $success = Send-KeyToWindow -Key $response -WindowHandle $debloatWindow
-                                            
-                                            if ($success) {
-                                                # Más tiempo para el primer paso (6 segundos para el primer "1")
-                                                if ($i -eq 0) {
-                                                    Write-Host "  -> Esperando 6 segundos para el primer paso..." -ForegroundColor Gray
-                                                    Start-Sleep -Milliseconds 6000
-                                                } else {
-                                                    Start-Sleep -Milliseconds 1200
-                                                }
-                                                
-                                                # Enviar Enter
-                                                $success = Send-KeyToWindow -Key "{ENTER}" -WindowHandle $debloatWindow
-                                            }
-                                        }
-                                        
-                                        if ($success) {
-                                            Write-Host "  -> ✓ Respuesta enviada exitosamente: $response" -ForegroundColor Green
-                                        } else {
-                                            Write-Host "  -> ✗ Fallo enviando respuesta, reintentando..." -ForegroundColor Yellow
-                                            Start-Sleep -Milliseconds 1000
-                                        }
-                                        
-                                    } catch {
-                                        $errorMsg = $_.Exception.Message
-                                        Write-Host "  -> Error en intento $attempts`: $errorMsg" -ForegroundColor Red
-                                        Start-Sleep -Milliseconds 1000
-                                    }
-                                }
-                                
-                                if (-not $success) {
-                                    Write-Host "  -> ⚠ No se pudo enviar la respuesta después de $maxAttempts intentos" -ForegroundColor Red
-                                }
-                                
-                                # Esperar entre respuestas
-                                Start-Sleep -Seconds 15
-                            }
-                            
-                            Write-Host ""
-                            Write-Host "=== MONITOREANDO PROGRESO ===" -ForegroundColor Cyan
-                            
-                            # Monitorear el proceso hasta completarse
-                            $timeout = 0
-                            $maxTimeout = 1800 # 30 minutos
-                            
-                            while (-not $process.HasExited -and $timeout -lt $maxTimeout) {
-                                Start-Sleep -Seconds 30
-                                $timeout += 30
-                                $minutesElapsed = [math]::Round($timeout / 60, 1)
-                                Write-Host "Proceso en ejecucion... ($minutesElapsed minutos transcurridos)" -ForegroundColor Gray
-                                
-                                # Verificar cada 2 minutos si necesita mas interaccion
-                                if ($timeout % 120 -eq 0) {
-                                    Write-Host "Enviando Enter adicional por seguridad..." -ForegroundColor Yellow
-                                    try {
-                                        [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
-                                    } catch {
-                                        Write-Host "Error enviando Enter adicional: $($_.Exception.Message)" -ForegroundColor Red
-                                    }
-                                }
-                            }
-                            
-                            # Verificar resultado del proceso
-                            if ($process.HasExited) {
-                                Write-Host ""
-                                if ($process.ExitCode -eq 0) {
-                                    Write-Host "DEBLOAT COMPLETADO EXITOSAMENTE" -ForegroundColor Green
-                                } else {
-                                    Write-Host "DEBLOAT COMPLETADO CON CÓDIGO: $($process.ExitCode)" -ForegroundColor Yellow
-                                }
-                            } else {
-                                Write-Host ""
-                                Write-Host "TIMEOUT: El debloat excedio el tiempo maximo (30 minutos)" -ForegroundColor Red
-                                Write-Host "Terminando proceso de debloat..." -ForegroundColor Yellow
-                                try {
-                                    $process.Kill()
-                                    Write-Host "Proceso terminado." -ForegroundColor Gray
-                                } catch {
-                                    Write-Host "Error terminando proceso: $($_.Exception.Message)" -ForegroundColor Red
-                                }
-                            }
-                            
+
                         } catch {
                             Write-Host ""
                             Write-Host "ERROR GENERAL: $($_.Exception.Message)" -ForegroundColor Red
                             Write-Host ""
                             Write-Host "Soluciones alternativas:" -ForegroundColor Cyan
                             Write-Host "1. Ejecutar manualmente:" -ForegroundColor White
-                            Write-Host '   & ([scriptblock]::Create((irm "https://debloat.raphi.re/")))' -ForegroundColor Gray
+                            Write-Host '   & ([scriptblock]::Create((irm "https://debloat.raphi.re/"))) -CLI -RemoveApps -RunDefaults -Silent -CreateRestorePoint' -ForegroundColor Gray
                             Write-Host "2. Verificar conexion a internet" -ForegroundColor White
                             Write-Host "3. Ejecutar como administrador" -ForegroundColor White
                         }
