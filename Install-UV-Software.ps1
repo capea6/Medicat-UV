@@ -43,6 +43,275 @@ Write-Host "=== LOGIN DISCO.UV.ES ===" -ForegroundColor Cyan
 Write-Host "✓ Ejecutándose con permisos de administrador" -ForegroundColor Green
 Write-Host ""
 
+# ==============================
+# CONFIGURACIÓN AUTOMÁTICA DE MICROCLAUDIA
+# ==============================
+$microclaudiaServidor = "microclaudia.ccn-cert.cni.es"
+$microclaudiaApiKey = "faede4e893e8b150439b47e019568c22340c3813398e38543c7a1cd41e2f503d"
+
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+Add-Type -AssemblyName System.Windows.Forms
+
+# AutomationId estables del asistente WiX de microClaudia (confirmados por diagnóstico)
+$microclaudiaNextButtonId = "630"
+$microclaudiaServidorFieldId = "605"
+$microclaudiaApiKeyFieldId = "616"
+
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+using System.Collections.Generic;
+
+public class MicroclaudiaWin32 {
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+
+    [DllImport("user32.dll")]
+    public static extern int GetWindowTextLength(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetCursorPos(int x, int y);
+
+    [DllImport("user32.dll")]
+    public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+
+    public const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+    public const uint MOUSEEVENTF_LEFTUP = 0x0004;
+
+    public static void ClickAt(int x, int y) {
+        SetCursorPos(x, y);
+        mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
+        mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
+    }
+
+    public static List<string> FindAllVisibleTitles() {
+        List<string> result = new List<string>();
+        EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
+            if (IsWindowVisible(hWnd)) {
+                int length = GetWindowTextLength(hWnd);
+                if (length > 0) {
+                    StringBuilder sb = new StringBuilder(length + 1);
+                    GetWindowText(hWnd, sb, sb.Capacity);
+                    result.Add(sb.ToString());
+                }
+            }
+            return true;
+        }, IntPtr.Zero);
+        return result;
+    }
+
+    public static List<IntPtr> FindInstallerWindows(string includeSubstring, string[] excludeSubstrings) {
+        List<IntPtr> result = new List<IntPtr>();
+        EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
+            if (IsWindowVisible(hWnd)) {
+                int length = GetWindowTextLength(hWnd);
+                if (length > 0) {
+                    StringBuilder sb = new StringBuilder(length + 1);
+                    GetWindowText(hWnd, sb, sb.Capacity);
+                    string title = sb.ToString();
+                    bool matchesInclude = title.IndexOf(includeSubstring, StringComparison.OrdinalIgnoreCase) >= 0;
+                    bool matchesExclude = false;
+                    foreach (string ex in excludeSubstrings) {
+                        if (title.IndexOf(ex, StringComparison.OrdinalIgnoreCase) >= 0) { matchesExclude = true; break; }
+                    }
+                    if (matchesInclude && !matchesExclude) {
+                        result.Add(hWnd);
+                    }
+                }
+            }
+            return true;
+        }, IntPtr.Zero);
+        return result;
+    }
+}
+"@
+
+$script:MicroclaudiaExcludeTitles = @("powershell", "cmd.exe", "símbolo del sistema", ".ps1", "command prompt")
+$script:MicroclaudiaLegacyPatternType = 'System.Windows.Automation.LegacyIAccessiblePattern' -as [type]
+
+function Wait-MicroclaudiaWindow {
+    param(
+        [string]$TitleSubstring = "microclaudia",
+        [int]$TimeoutSeconds = 60
+    )
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $handles = [MicroclaudiaWin32]::FindInstallerWindows($TitleSubstring, $script:MicroclaudiaExcludeTitles)
+        if ($handles.Count -gt 0) {
+            return [System.Windows.Automation.AutomationElement]::FromHandle($handles[0])
+        }
+        Start-Sleep -Milliseconds 500
+    }
+
+    Write-Host "  Ventanas visibles detectadas en este momento (para diagnóstico):" -ForegroundColor DarkGray
+    $titles = [MicroclaudiaWin32]::FindAllVisibleTitles()
+    if ($titles.Count -eq 0) {
+        Write-Host "    (ninguna ventana visible encontrada)" -ForegroundColor DarkGray
+    } else {
+        foreach ($t in $titles) { Write-Host "    - '$t'" -ForegroundColor DarkGray }
+    }
+    return $null
+}
+
+function Get-MicroclaudiaElementById {
+    param(
+        [System.Windows.Automation.AutomationElement]$Window,
+        [string]$AutomationId
+    )
+    $condition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $AutomationId)
+    return $Window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+}
+
+function Invoke-MicroclaudiaElementClick {
+    param(
+        [System.Windows.Automation.AutomationElement]$Element
+    )
+    if (-not $Element) { return $false }
+
+    $invokePattern = $null
+    if ($Element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$invokePattern)) {
+        $invokePattern.Invoke()
+        return $true
+    }
+
+    if ($script:MicroclaudiaLegacyPatternType) {
+        $legacyPattern = $null
+        if ($Element.TryGetCurrentPattern($script:MicroclaudiaLegacyPatternType::Pattern, [ref]$legacyPattern)) {
+            $legacyPattern.DoDefaultAction()
+            return $true
+        }
+    }
+
+    $rect = $Element.Current.BoundingRectangle
+    if ($rect.IsEmpty) { return $false }
+    $x = [int]($rect.X + $rect.Width / 2)
+    $y = [int]($rect.Y + $rect.Height / 2)
+    [MicroclaudiaWin32]::ClickAt($x, $y)
+    return $true
+}
+
+function Set-MicroclaudiaElementText {
+    param(
+        [System.Windows.Automation.AutomationElement]$Element,
+        [string]$Text
+    )
+    if (-not $Element) { return $false }
+
+    $valuePattern = $null
+    if ($Element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern)) {
+        $valuePattern.SetValue($Text)
+        return $true
+    }
+
+    if ($script:MicroclaudiaLegacyPatternType) {
+        $legacyPattern = $null
+        if ($Element.TryGetCurrentPattern($script:MicroclaudiaLegacyPatternType::Pattern, [ref]$legacyPattern)) {
+            try {
+                $legacyPattern.SetValue($Text)
+                return $true
+            } catch { }
+        }
+    }
+
+    $rect = $Element.Current.BoundingRectangle
+    if ($rect.IsEmpty) { return $false }
+    $x = [int]($rect.X + $rect.Width / 2)
+    $y = [int]($rect.Y + $rect.Height / 2)
+    [MicroclaudiaWin32]::ClickAt($x, $y)
+    Start-Sleep -Milliseconds 200
+    [System.Windows.Forms.SendKeys]::SendWait("^a")
+    [System.Windows.Forms.SendKeys]::SendWait("{DEL}")
+    [System.Windows.Forms.SendKeys]::SendWait($Text)
+    return $true
+}
+
+function Invoke-MicroclaudiaAutomation {
+    param(
+        [string]$Servidor,
+        [string]$ApiKey
+    )
+
+    Write-Host "  Esperando ventana del instalador de microClaudia..." -ForegroundColor Gray
+    $window = Wait-MicroclaudiaWindow -TimeoutSeconds 60
+    if (-not $window) {
+        Write-Host "  ⚠ No se pudo detectar la ventana de microClaudia. Complete la instalación manualmente." -ForegroundColor Yellow
+        return
+    }
+    Write-Host "  ✓ Ventana detectada: '$($window.Current.Name)'" -ForegroundColor Green
+
+    Write-Host "  Esperando a que el asistente esté listo (botón 'Siguiente' habilitado)..." -ForegroundColor Gray
+    $nextButton = $null
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        $nextButton = Get-MicroclaudiaElementById -Window $window -AutomationId $microclaudiaNextButtonId
+        if ($nextButton -and $nextButton.Current.IsEnabled) { break }
+        Start-Sleep -Milliseconds 500
+    }
+
+    if (-not $nextButton -or -not $nextButton.Current.IsEnabled) {
+        Write-Host "  ⚠ El botón 'Siguiente' no se habilitó a tiempo. Complete la instalación manualmente." -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host "  Pulsando 'Siguiente' en la pantalla de bienvenida..." -ForegroundColor Gray
+    if (-not (Invoke-MicroclaudiaElementClick -Element $nextButton)) {
+        Write-Host "  ⚠ No se pudo pulsar el botón 'Siguiente'." -ForegroundColor Yellow
+        return
+    }
+
+    Start-Sleep -Seconds 2
+
+    # La pantalla de configuración es una ventana nueva (título distinto: 'microclaudia X.X.X')
+    $configWindow = Wait-MicroclaudiaWindow -TimeoutSeconds 15
+    if ($configWindow) { $window = $configWindow }
+
+    Write-Host "  Buscando campos Servidor y API Key..." -ForegroundColor Gray
+    $servidorField = $null
+    $apiKeyField = $null
+    $deadline = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $deadline -and (-not $servidorField -or -not $apiKeyField)) {
+        $servidorField = Get-MicroclaudiaElementById -Window $window -AutomationId $microclaudiaServidorFieldId
+        $apiKeyField = Get-MicroclaudiaElementById -Window $window -AutomationId $microclaudiaApiKeyFieldId
+        if (-not $servidorField -or -not $apiKeyField) { Start-Sleep -Milliseconds 500 }
+    }
+
+    if (-not $servidorField -or -not $apiKeyField) {
+        Write-Host "  ⚠ No se encontraron los campos Servidor/API Key. Complete la configuración manualmente." -ForegroundColor Yellow
+        return
+    }
+
+    Set-MicroclaudiaElementText -Element $servidorField -Text $Servidor | Out-Null
+    Set-MicroclaudiaElementText -Element $apiKeyField -Text $ApiKey | Out-Null
+
+    Write-Host "  ✓ Servidor y API Key introducidos correctamente." -ForegroundColor Green
+
+    Start-Sleep -Milliseconds 500
+
+    $nextButton2 = Get-MicroclaudiaElementById -Window $window -AutomationId $microclaudiaNextButtonId
+    if (-not $nextButton2) {
+        Write-Host "  ⚠ No se encontró el botón 'Siguiente' en la pantalla de configuración." -ForegroundColor Yellow
+        return
+    }
+
+    if (-not (Invoke-MicroclaudiaElementClick -Element $nextButton2)) {
+        Write-Host "  ⚠ No se pudo pulsar el botón 'Siguiente' tras rellenar los datos." -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host "  ✓ Configuración enviada. Complete el resto del asistente manualmente si se requiere." -ForegroundColor Green
+}
+
 # Solicitar credenciales
 $username = Read-Host "Ingrese su usuario"
 $securePassword = Read-Host "Ingrese su contraseña" -AsSecureString
@@ -823,12 +1092,29 @@ try {
                                 } elseif ($file.Extension.ToLower() -eq ".msi") {
                                     # Instalar archivo .msi con interfaz visible
                                     Write-Host "  Abriendo instalador de MSI..." -ForegroundColor Gray
-                                    Write-Host "  POR FAVOR: Complete la instalación manualmente en la ventana que se abre" -ForegroundColor Yellow
-                                    
+
+                                    $isMicroclaudia = $file.Name -like "*microclaudia*"
+
+                                    if ($isMicroclaudia) {
+                                        Write-Host "  Instalador de microClaudia detectado. Se configurará automáticamente." -ForegroundColor Cyan
+                                    } else {
+                                        Write-Host "  POR FAVOR: Complete la instalación manualmente en la ventana que se abre" -ForegroundColor Yellow
+                                    }
+
                                     # Abrir instalador MSI con interfaz visible
                                     $process = Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", "`"$($file.FullName)`"" -PassThru
-                                    
+
                                     Write-Host "  Instalador MSI iniciado con PID: $($process.Id)" -ForegroundColor Cyan
+
+                                    if ($isMicroclaudia) {
+                                        try {
+                                            Invoke-MicroclaudiaAutomation -Servidor $microclaudiaServidor -ApiKey $microclaudiaApiKey
+                                        } catch {
+                                            Write-Host "  ✗ Error automatizando el asistente de microClaudia: $($_.Exception.Message)" -ForegroundColor Red
+                                            Write-Host "  Complete la configuración manualmente en la ventana que se abrió." -ForegroundColor Yellow
+                                        }
+                                    }
+
                                     Write-Host "  Monitoreando proceso hasta que termine..." -ForegroundColor Gray
                                     
                                     # Monitorear el proceso hasta que termine
